@@ -11,6 +11,15 @@ type NormalizationParams = {
 // Sigmoid function for logistic regression
 const sigmoid = (z: number): number => 1 / (1 + Math.exp(-z));
 
+// Cost function for logistic regression
+const computeCost = (X: number[][], y: number[], theta: number[], lambda: number): number => {
+  const m = X.length;
+  const h = X.map(x => sigmoid(x.reduce((sum, xi, j) => sum + xi * theta[j], 0)));
+  const cost = y.reduce((sum, yi, i) => sum + (yi * Math.log(h[i]) + (1 - yi) * Math.log(1 - h[i])), 0) / -m;
+  const regCost = lambda * theta.slice(1).reduce((sum, t) => sum + t * t, 0) / (2 * m);
+  return cost + regCost;
+};
+
 // Feature scaling (Min-Max normalization)
 const normalizeFeatures = (data: number[], params?: NormalizationParams): number[] => {
   // Filter out NaN values
@@ -34,13 +43,16 @@ const calculateGradient = (
   X: number[][],
   y: number[],
   theta: number[],
-  m: number
+  m: number,
+  lambda: number
 ): number[] => {
   const h = X.map(x => sigmoid(x.reduce((sum, xi, j) => sum + xi * theta[j], 0)));
   return theta.map((_, j) => {
-    return (1 / m) * X.reduce((sum, x, i) => {
+    const gradient = (1 / m) * X.reduce((sum, x, i) => {
       return sum + (h[i] - y[i]) * x[j];
     }, 0);
+    // Add regularization term (except for bias term)
+    return j === 0 ? gradient : gradient + (lambda / m) * theta[j];
   });
 };
 
@@ -48,13 +60,14 @@ export const trainModel = (
   features: number[][],
   labels: number[],
   learningRate = 0.01,
-  iterations = 1000
+  iterations = 5000,
+  convergenceThreshold = 1e-6
 ): { theta: number[], normalizationParams: NormalizationParams[] } => {
   const m = features.length;
   const n = features[0].length;
   
-  // Initialize parameters
-  let theta = new Array(n).fill(0);
+  // Initialize parameters with fixed small values
+  let theta = new Array(n).fill(1);
   
   // Calculate normalization parameters for each feature
   const normalizationParams: NormalizationParams[] = [];
@@ -71,10 +84,29 @@ export const trainModel = (
     row.map((val, i) => i === 0 ? 1 : normalizeFeatures([val], normalizationParams[i])[0])
   );
   
-  // Gradient descent
+  // Add L2 regularization to prevent overfitting
+  const lambda = 0.01;
+  
+  // Gradient descent with convergence check
+  let prevCost = Infinity;
+  let noImprovementCount = 0;
+  
   for (let i = 0; i < iterations; i++) {
-    const gradients = calculateGradient(normalizedFeatures, labels, theta, m);
+    const gradients = calculateGradient(normalizedFeatures, labels, theta, m, lambda);
     theta = theta.map((t, j) => t - learningRate * gradients[j]);
+    
+    // Check for convergence
+    const currentCost = computeCost(normalizedFeatures, labels, theta, lambda);
+    const costDiff = Math.abs(prevCost - currentCost);
+    
+    if (costDiff < convergenceThreshold) {
+      noImprovementCount++;
+      if (noImprovementCount >= 5) break; // Stop if no improvement for 5 iterations
+    } else {
+      noImprovementCount = 0;
+    }
+    
+    prevCost = currentCost;
   }
   
   return { theta, normalizationParams };

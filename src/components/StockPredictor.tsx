@@ -38,32 +38,130 @@ const StockPredictor: React.FC = () => {
   };
 
   const makePrediction = useCallback(() => {
-    if (stockData.length < 2) return;
+    if (stockData.length < 6) return; // Need at least 6 days of data
     setLoading(true);
 
-    // Prepare features and labels
+    // Prepare features and labels using all available data
     const features: number[][] = [];
     const labels: number[] = [];
 
-    for (let i = 1; i < stockData.length; i++) {
-      const prevDay = stockData[i - 1];
+    // Calculate moving averages and other features for each day
+    for (let i = 5; i < stockData.length - 1; i++) {
+      // Use last 5 days of data for features
+      const last5Days = stockData.slice(i - 5, i);
       const currentDay = stockData[i];
+      const nextDay = stockData[i + 1];
+      
+      // Skip if any required data is missing or invalid
+      if (!currentDay || !nextDay || last5Days.some(day => !day)) continue;
+      
+      // Calculate price-based features
+      const avgPrice = last5Days.reduce((sum, day) => sum + (day?.price || 0), 0) / 5;
+      const priceChange = currentDay.price - last5Days[4].price;
+      const priceChangePercent = (priceChange / last5Days[4].price) * 100;
+      const priceVolatility = Math.sqrt(
+        last5Days.reduce((sum, day) => sum + Math.pow(day.price - avgPrice, 2), 0) / 5
+      );
+      
+      // Calculate volume-based features
+      const avgVolume = last5Days.reduce((sum, day) => sum + (day?.volume || 0), 0) / 5;
+      const volumeChange = currentDay.volume - last5Days[4].volume;
+      const volumeChangePercent = (volumeChange / last5Days[4].volume) * 100;
+      
+      // Calculate trend features
+      const priceTrend = last5Days.map((day, idx) => day.price).reduce((acc, price, idx, arr) => {
+        if (idx === 0) return 0;
+        return acc + (price > arr[idx - 1] ? 1 : -1);
+      }, 0) / 4; // Normalize by number of comparisons
+      
+      const volumeTrend = last5Days.map((day, idx) => day.volume).reduce((acc, volume, idx, arr) => {
+        if (idx === 0) return 0;
+        return acc + (volume > arr[idx - 1] ? 1 : -1);
+      }, 0) / 4;
+      
+      // Skip if any calculated features are NaN
+      if (isNaN(avgPrice) || isNaN(avgVolume) || isNaN(priceChange) || isNaN(volumeChange) ||
+          isNaN(priceChangePercent) || isNaN(volumeChangePercent) || isNaN(priceVolatility) ||
+          isNaN(priceTrend) || isNaN(volumeTrend)) continue;
       
       features.push([
         1, // bias term
-        prevDay.price,
-        prevDay.volume
+        avgPrice,
+        avgVolume,
+        priceChange,
+        volumeChange,
+        priceChangePercent,
+        volumeChangePercent,
+        priceVolatility,
+        priceTrend,
+        volumeTrend
       ]);
       
-      labels.push(currentDay.price > prevDay.price ? 1 : 0);
+      // Label is 1 if price went up next day, 0 if down
+      labels.push(nextDay.price > currentDay.price ? 1 : 0);
+    }
+
+    // Skip if we don't have enough training data
+    if (features.length < 2) {
+      setLoading(false);
+      return;
     }
 
     // Train model
     const model = trainModel(features, labels);
 
-    // Make prediction using the last day's data
+    // Make prediction using the last 5 days of data
+    const last5Days = stockData.slice(-5);
     const lastDay = stockData[stockData.length - 1];
-    const result = predict([1, lastDay.price, lastDay.volume], model);
+    
+    // Skip if any required data is missing or invalid
+    if (!lastDay || last5Days.some(day => !day)) {
+      setLoading(false);
+      return;
+    }
+    
+    // Calculate the same features for prediction
+    const avgPrice = last5Days.reduce((sum, day) => sum + (day?.price || 0), 0) / 5;
+    const priceChange = lastDay.price - last5Days[4].price;
+    const priceChangePercent = (priceChange / last5Days[4].price) * 100;
+    const priceVolatility = Math.sqrt(
+      last5Days.reduce((sum, day) => sum + Math.pow(day.price - avgPrice, 2), 0) / 5
+    );
+    
+    const avgVolume = last5Days.reduce((sum, day) => sum + (day?.volume || 0), 0) / 5;
+    const volumeChange = lastDay.volume - last5Days[4].volume;
+    const volumeChangePercent = (volumeChange / last5Days[4].volume) * 100;
+    
+    const priceTrend = last5Days.map((day, idx) => day.price).reduce((acc, price, idx, arr) => {
+      if (idx === 0) return 0;
+      return acc + (price > arr[idx - 1] ? 1 : -1);
+    }, 0) / 4;
+    
+    const volumeTrend = last5Days.map((day, idx) => day.volume).reduce((acc, volume, idx, arr) => {
+      if (idx === 0) return 0;
+      return acc + (volume > arr[idx - 1] ? 1 : -1);
+    }, 0) / 4;
+    
+    // Skip if any calculated features are NaN
+    if (isNaN(avgPrice) || isNaN(avgVolume) || isNaN(priceChange) || isNaN(volumeChange) ||
+        isNaN(priceChangePercent) || isNaN(volumeChangePercent) || isNaN(priceVolatility) ||
+        isNaN(priceTrend) || isNaN(volumeTrend)) {
+      setLoading(false);
+      return;
+    }
+    
+    const result = predict([
+      1, // bias term
+      avgPrice,
+      avgVolume,
+      priceChange,
+      volumeChange,
+      priceChangePercent,
+      volumeChangePercent,
+      priceVolatility,
+      priceTrend,
+      volumeTrend
+    ], model);
     
     setPrediction(result);
     setLoading(false);
